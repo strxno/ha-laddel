@@ -41,36 +41,30 @@ async def async_setup_entry(
 
     entities = []
 
-    # Add subscription status sensor
-    entities.append(LaddelSubscriptionStatusSensor(coordinator, entry))
-    
-    # Add monthly fee sensor
-    entities.append(LaddelMonthlyFeeSensor(coordinator, entry))
-    
-    # Add facility name sensor
-    entities.append(LaddelFacilityNameSensor(coordinator, entry))
-    
-    # Add days remaining sensor
-    entities.append(LaddelDaysRemainingSensor(coordinator, entry))
-
-    # Add charging session sensors
+    # Priority 1: Current charging session (most important)
     entities.append(LaddelChargingSessionStatusSensor(coordinator, entry))
-    entities.append(LaddelChargingPowerSensor(coordinator, entry))
     entities.append(LaddelEnergyConsumedSensor(coordinator, entry))
+    entities.append(LaddelChargingPowerSensor(coordinator, entry))  # Real calculated power
     entities.append(LaddelChargingDurationSensor(coordinator, entry))
+    
+    # Priority 2: Charger and facility status
+    entities.append(LaddelChargerStatusSensor(coordinator, entry))
     entities.append(LaddelChargerIdSensor(coordinator, entry))
-    
-    # Add facility sensors
     entities.append(LaddelElectricityPriceSensor(coordinator, entry))
-    entities.append(LaddelFacilityAddressSensor(coordinator, entry))
     
-    # Add cost tracking sensors
+    # Priority 3: Cost tracking (financial info)
     entities.append(LaddelLastSessionCostSensor(coordinator, entry))
     entities.append(LaddelMonthlyCostSensor(coordinator, entry))
     entities.append(LaddelSessionCountSensor(coordinator, entry))
     
-    # Add charger status sensor
-    entities.append(LaddelChargerStatusSensor(coordinator, entry))
+    # Priority 4: Facility information
+    entities.append(LaddelFacilityNameSensor(coordinator, entry))
+    entities.append(LaddelFacilityAddressSensor(coordinator, entry))
+    entities.append(LaddelMaxChargingCapacitySensor(coordinator, entry))  # Max 22kW capacity
+    
+    # Priority 5: Subscription info (least important for daily use)
+    entities.append(LaddelMonthlyFeeSensor(coordinator, entry))
+    entities.append(LaddelSessionIdSensor(coordinator, entry))  # Replace useless sensors with Session ID
 
     async_add_entities(entities)
 
@@ -333,23 +327,51 @@ class LaddelChargingPowerSensor(LaddelSensor):
         if not session_data or session_data.get("errorKey") == "noSession":
             return None
         
-        # Power isn't available in current_session API response
-        # For now, estimate based on typical charging patterns
-        # Later we might get this from charger operating mode or facility info
         session_type = session_data.get("type", "").upper()
         charger_mode = session_data.get("chargerOperatingMode", "")
         
-        if session_type == "ACTIVE" and charger_mode == "CHARGING":
-            # Estimate based on facility's max power (if available)
+        # Only calculate power during active charging
+        if session_type != "ACTIVE" or charger_mode != "CHARGING":
+            return 0.0
+        
+        # Calculate real charging power from energy consumed over time
+        energy_kwh = session_data.get("charged")  # kWh consumed
+        start_time_str = session_data.get("startTime")
+        
+        if not start_time_str:
+            return 0.0
+            
+        # If no energy consumed yet (very new session), estimate power
+        if not energy_kwh or energy_kwh <= 0:
+            # For very new sessions, use a reasonable estimate
+            return 11.0  # Typical charging rate
+        
+        try:
+            from datetime import datetime
+            from homeassistant.util import dt as dt_util
+            
+            # Parse start time
+            start_dt = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+            now = dt_util.now()
+            duration_hours = (now - start_dt).total_seconds() / 3600
+            
+            if duration_hours <= 0:
+                return 0.0
+            
+            # Calculate average power: kWh / hours = kW
+            average_power = energy_kwh / duration_hours
+            
+            # Cap at facility max power (sanity check)
+            max_power = 22.0  # Default max
             if (self.coordinator.data.get("facility") and 
                 self.coordinator.data["facility"].get("kweffect")):
-                return self.coordinator.data["facility"]["kweffect"]
-            # Default estimate for active charging
-            return 11.0  # Typical 11kW charging
-        elif session_type == "ACTIVE" and charger_mode in ["IDLE", "CAR_CONNECTED"]:
-            return 0.0  # Connected but not charging
-        
-        return None
+                max_power = self.coordinator.data["facility"]["kweffect"]
+            
+            return min(round(average_power, 2), max_power)
+            
+        except (ValueError, TypeError) as e:
+            _LOGGER.debug("Error calculating charging power: %s", e)
+            return 0.0
 
 
 class LaddelEnergyConsumedSensor(LaddelSensor):
@@ -750,5 +772,87 @@ class LaddelChargerStatusSensor(LaddelSensor):
                     "latest_facility_name": latest_charger.get("facilityName"),
                     "is_latest_charger": latest_charger.get("chargerId") == charger_data.get("chargerId"),
                 })
+        
+        return attributes
+
+
+class LaddelSessionIdSensor(LaddelSensor):
+    """Sensor for current charging session ID."""
+
+    def __init__(self, coordinator: LaddelDataUpdateCoordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry)
+        self._attr_name = "Session ID"
+        self._attr_unique_id = f"{entry.entry_id}_session_id"
+        self._attr_icon = "mdi:identifier"
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the native value of the sensor."""
+        if not self.coordinator.data or "current_session" not in self.coordinator.data:
+            return None
+        
+        session_data = self.coordinator.data["current_session"]
+        if not session_data or session_data.get("errorKey") == "noSession":
+            return None
+        
+        return session_data.get("sessionId")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity specific state attributes."""
+        if not self.coordinator.data or "current_session" not in self.coordinator.data:
+            return {}
+        
+        session_data = self.coordinator.data["current_session"]
+        if not session_data or session_data.get("errorKey") == "noSession":
+            return {}
+        
+        return {
+            "facility_id": session_data.get("facilityId"),
+            "start_time": session_data.get("startTime"),
+            "session_type": session_data.get("type"),
+            "charging_privately": session_data.get("chargingPrivately"),
+        }
+
+
+class LaddelMaxChargingCapacitySensor(LaddelSensor):
+    """Sensor for maximum charging capacity of the charger."""
+
+    def __init__(self, coordinator: LaddelDataUpdateCoordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry)
+        self._attr_name = "Max Charging Capacity"
+        self._attr_unique_id = f"{entry.entry_id}_max_charging_capacity"
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
+        self._attr_icon = "mdi:lightning-bolt"
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the native value of the sensor."""
+        # Get max power from facility data
+        if (self.coordinator.data and 
+            self.coordinator.data.get("facility") and 
+            self.coordinator.data["facility"].get("kweffect")):
+            return self.coordinator.data["facility"]["kweffect"]
+        
+        # Default fallback for typical Norwegian chargers
+        return 22.0
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity specific state attributes."""
+        attributes = {}
+        
+        if (self.coordinator.data and 
+            self.coordinator.data.get("facility")):
+            facility_data = self.coordinator.data["facility"]
+            attributes.update({
+                "facility_name": facility_data.get("facilityName"),
+                "charger_count": len(facility_data.get("chargers", [])),
+                "price_type": facility_data.get("priceType"),
+                "charging_fee": facility_data.get("chargingFeeIncludingVAT", 0),
+            })
         
         return attributes
