@@ -703,7 +703,8 @@ class LaddelChargerStatusSensor(LaddelSensor):
         # Map operating modes to user-friendly states
         mode_mapping = {
             "CAR_CONNECTED": "Car Connected",
-            "AVAILABLE": "Available",
+            "DISCONNECTED": "Disconnected",
+            "AVAILABLE": "Available", 
             "CHARGING": "Charging",
             "IDLE": "Idle",
             "OCCUPIED": "Occupied",

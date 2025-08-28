@@ -172,6 +172,8 @@ class LaddelCarConnectedBinarySensor(LaddelBinarySensor):
         
         # Car is connected if operating mode indicates connection
         connected_modes = ["CAR_CONNECTED", "CHARGING", "IDLE"]
+        disconnected_modes = ["DISCONNECTED", "AVAILABLE", "OFFLINE", "ERROR"]
+        
         return operating_mode in connected_modes
 
     @property
