@@ -63,6 +63,14 @@ async def async_setup_entry(
     # Add facility sensors
     entities.append(LaddelElectricityPriceSensor(coordinator, entry))
     entities.append(LaddelFacilityAddressSensor(coordinator, entry))
+    
+    # Add cost tracking sensors
+    entities.append(LaddelLastSessionCostSensor(coordinator, entry))
+    entities.append(LaddelMonthlyCostSensor(coordinator, entry))
+    entities.append(LaddelSessionCountSensor(coordinator, entry))
+    
+    # Add charger status sensor
+    entities.append(LaddelChargerStatusSensor(coordinator, entry))
 
     async_add_entities(entities)
 
@@ -234,18 +242,33 @@ class LaddelChargingSessionStatusSensor(LaddelSensor):
         
         session_data = self.coordinator.data["current_session"]
         if not session_data:
+            # Check for "noSession" error
+            error_key = session_data.get("errorKey") if session_data else None
+            if error_key == "noSession":
+                return "No Session"
             return "No Active Session"
         
-        # Check session type and status from real API response
+        # Check session type and charger operating mode from real API response
         session_type = session_data.get("type", "").upper()
+        charger_mode = session_data.get("chargerOperatingMode", "")
+        error_key = session_data.get("errorKey")
+        
+        # Handle error states
+        if error_key == "noSession":
+            return "No Session"
+        elif error_key:
+            return f"Error: {error_key}"
+        
+        # Handle active sessions with different operating modes
         if session_type == "ACTIVE":
-            charger_mode = session_data.get("chargerOperatingMode", "")
             if charger_mode == "CHARGING":
                 return "Charging"
+            elif charger_mode == "COMPLETED":
+                return "Session Complete"
             elif charger_mode == "IDLE":
                 return "Connected"
             else:
-                return "Active"
+                return f"Active ({charger_mode})"
         elif session_type == "COMPLETED":
             return "Completed"
         elif session_type == "CANCELLED":
@@ -483,3 +506,225 @@ class LaddelFacilityAddressSensor(LaddelSensor):
             "charger_count": len(facility_data.get("chargers", [])),
             "kw_effect": facility_data.get("kweffect"),
         }
+
+
+class LaddelLastSessionCostSensor(LaddelSensor):
+    """Sensor for the cost of the last charging session."""
+
+    def __init__(self, coordinator: LaddelDataUpdateCoordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry)
+        self._attr_name = "Last Session Cost"
+        self._attr_unique_id = f"{entry.entry_id}_last_session_cost"
+        self._attr_state_class = SensorStateClass.TOTAL
+        self._attr_native_unit_of_measurement = "NOK"
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the native value of the sensor."""
+        if not self.coordinator.data or "recent_sessions" not in self.coordinator.data:
+            return None
+        
+        recent_data = self.coordinator.data["recent_sessions"]
+        if not recent_data or not recent_data.get("receipts"):
+            return None
+        
+        # Get the most recent session cost
+        latest_receipt = recent_data["receipts"][0]
+        cost = latest_receipt.get("totalAmount")
+        if cost is not None:
+            return round(float(cost), 2)
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity specific state attributes."""
+        if not self.coordinator.data or "recent_sessions" not in self.coordinator.data:
+            return {}
+        
+        recent_data = self.coordinator.data["recent_sessions"]
+        if not recent_data or not recent_data.get("receipts"):
+            return {}
+        
+        latest_receipt = recent_data["receipts"][0]
+        return {
+            "session_start": latest_receipt.get("sessionStart"),
+            "session_end": latest_receipt.get("sessionEnd"),
+            "charger_name": latest_receipt.get("chargerName"),
+            "facility_name": latest_receipt.get("facilityName"),
+            "power_consumption": latest_receipt.get("powerConsumption"),
+            "payment_status": latest_receipt.get("paymentStatus"),
+            "currency": latest_receipt.get("currency"),
+            "total_excl_vat": latest_receipt.get("totalPriceExclVat"),
+            "total_vat": latest_receipt.get("totalVat"),
+        }
+
+
+class LaddelMonthlyCostSensor(LaddelSensor):
+    """Sensor for monthly charging costs."""
+
+    def __init__(self, coordinator: LaddelDataUpdateCoordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry)
+        self._attr_name = "Monthly Charging Cost"
+        self._attr_unique_id = f"{entry.entry_id}_monthly_cost"
+        self._attr_state_class = SensorStateClass.TOTAL
+        self._attr_native_unit_of_measurement = "NOK"
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the native value of the sensor."""
+        if not self.coordinator.data or "recent_sessions" not in self.coordinator.data:
+            return None
+        
+        recent_data = self.coordinator.data["recent_sessions"]
+        if not recent_data or not recent_data.get("monthlySummaries"):
+            return None
+        
+        # Get current month's total
+        current_month = datetime.now().strftime("%Y-%m")
+        for summary in recent_data["monthlySummaries"]:
+            if summary.get("month") == current_month:
+                total_amount = summary.get("totalAmount")
+                if total_amount is not None:
+                    return round(float(total_amount), 2)
+        
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity specific state attributes."""
+        if not self.coordinator.data or "recent_sessions" not in self.coordinator.data:
+            return {}
+        
+        recent_data = self.coordinator.data["recent_sessions"]
+        if not recent_data or not recent_data.get("monthlySummaries"):
+            return {}
+        
+        # Return all monthly summaries
+        monthly_data = {}
+        for summary in recent_data["monthlySummaries"]:
+            month = summary.get("month")
+            if month:
+                monthly_data[month] = {
+                    "total_amount": summary.get("totalAmount"),
+                    "session_count": summary.get("sessionCount"),
+                }
+        
+        return {"monthly_summaries": monthly_data}
+
+
+class LaddelSessionCountSensor(LaddelSensor):
+    """Sensor for monthly session count."""
+
+    def __init__(self, coordinator: LaddelDataUpdateCoordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry)
+        self._attr_name = "Monthly Session Count"
+        self._attr_unique_id = f"{entry.entry_id}_session_count"
+        self._attr_state_class = SensorStateClass.TOTAL
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the native value of the sensor."""
+        if not self.coordinator.data or "recent_sessions" not in self.coordinator.data:
+            return None
+        
+        recent_data = self.coordinator.data["recent_sessions"]
+        if not recent_data or not recent_data.get("monthlySummaries"):
+            return None
+        
+        # Get current month's session count
+        current_month = datetime.now().strftime("%Y-%m")
+        for summary in recent_data["monthlySummaries"]:
+            if summary.get("month") == current_month:
+                session_count = summary.get("sessionCount")
+                if session_count is not None:
+                    return int(session_count)
+        
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity specific state attributes."""
+        if not self.coordinator.data or "recent_sessions" not in self.coordinator.data:
+            return {}
+        
+        recent_data = self.coordinator.data["recent_sessions"]
+        if not recent_data or not recent_data.get("receipts"):
+            return {}
+        
+        # Count sessions by payment status
+        payment_statuses = {}
+        for receipt in recent_data["receipts"]:
+            status = receipt.get("paymentStatus", "unknown")
+            payment_statuses[status] = payment_statuses.get(status, 0) + 1
+        
+        return {
+            "payment_status_breakdown": payment_statuses,
+            "total_sessions": len(recent_data["receipts"]),
+        }
+
+
+class LaddelChargerStatusSensor(LaddelSensor):
+    """Sensor for charger operating mode and car connection status."""
+
+    def __init__(self, coordinator: LaddelDataUpdateCoordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry)
+        self._attr_name = "Charger Status"
+        self._attr_unique_id = f"{entry.entry_id}_charger_status"
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the native value of the sensor."""
+        if not self.coordinator.data or "charger_operating_mode" not in self.coordinator.data:
+            return "Unknown"
+        
+        charger_data = self.coordinator.data["charger_operating_mode"]
+        if not charger_data:
+            return "Unknown"
+        
+        operating_mode = charger_data.get("operatingMode", "")
+        
+        # Map operating modes to user-friendly states
+        mode_mapping = {
+            "CAR_CONNECTED": "Car Connected",
+            "AVAILABLE": "Available",
+            "CHARGING": "Charging",
+            "IDLE": "Idle",
+            "OCCUPIED": "Occupied",
+            "OUT_OF_ORDER": "Out of Order",
+            "OFFLINE": "Offline",
+        }
+        
+        return mode_mapping.get(operating_mode, operating_mode)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity specific state attributes."""
+        if not self.coordinator.data or "charger_operating_mode" not in self.coordinator.data:
+            return {}
+        
+        charger_data = self.coordinator.data["charger_operating_mode"]
+        if not charger_data:
+            return {}
+        
+        attributes = {
+            "charger_id": charger_data.get("chargerId"),
+            "operating_mode": charger_data.get("operatingMode"),
+            "error_key": charger_data.get("errorKey"),
+        }
+        
+        # Add latest charger info if available
+        if self.coordinator.data.get("latest_chargers"):
+            latest_data = self.coordinator.data["latest_chargers"]
+            if latest_data.get("chargers"):
+                latest_charger = latest_data["chargers"][0]
+                attributes.update({
+                    "latest_charger_name": latest_charger.get("chargerName"),
+                    "latest_facility_name": latest_charger.get("facilityName"),
+                    "is_latest_charger": latest_charger.get("chargerId") == charger_data.get("chargerId"),
+                })
+        
+        return attributes

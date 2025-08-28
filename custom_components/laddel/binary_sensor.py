@@ -25,6 +25,9 @@ async def async_setup_entry(
     
     # Add active charging session binary sensor
     entities.append(LaddelActiveChargingSessionBinarySensor(coordinator, entry))
+    
+    # Add car connection binary sensor
+    entities.append(LaddelCarConnectedBinarySensor(coordinator, entry))
 
     async_add_entities(entities)
 
@@ -144,3 +147,57 @@ class LaddelActiveChargingSessionBinarySensor(LaddelBinarySensor):
             "is_completed": session_data.get("isCompleted", False),
             "is_cancelled": session_data.get("isCancelled", False),
         }
+
+
+class LaddelCarConnectedBinarySensor(LaddelBinarySensor):
+    """Binary sensor for car connection status."""
+
+    def __init__(self, coordinator: LaddelDataUpdateCoordinator, entry: ConfigEntry) -> None:
+        """Initialize the binary sensor."""
+        super().__init__(coordinator, entry)
+        self._attr_name = "Car Connected"
+        self._attr_unique_id = f"{entry.entry_id}_car_connected"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if car is connected to charger."""
+        if not self.coordinator.data or "charger_operating_mode" not in self.coordinator.data:
+            return None
+        
+        charger_data = self.coordinator.data["charger_operating_mode"]
+        if not charger_data:
+            return None
+        
+        operating_mode = charger_data.get("operatingMode", "")
+        
+        # Car is connected if operating mode indicates connection
+        connected_modes = ["CAR_CONNECTED", "CHARGING", "IDLE"]
+        return operating_mode in connected_modes
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity specific state attributes."""
+        if not self.coordinator.data or "charger_operating_mode" not in self.coordinator.data:
+            return {}
+        
+        charger_data = self.coordinator.data["charger_operating_mode"]
+        if not charger_data:
+            return {}
+        
+        attributes = {
+            "charger_id": charger_data.get("chargerId"),
+            "operating_mode": charger_data.get("operatingMode"),
+            "error_key": charger_data.get("errorKey"),
+        }
+        
+        # Add session info if available
+        if self.coordinator.data.get("current_session"):
+            session_data = self.coordinator.data["current_session"]
+            if session_data and not session_data.get("errorKey"):
+                attributes.update({
+                    "session_id": session_data.get("sessionId"),
+                    "session_type": session_data.get("type"),
+                    "charging_mode": session_data.get("chargerOperatingMode"),
+                })
+        
+        return attributes

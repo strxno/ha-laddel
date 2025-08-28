@@ -12,6 +12,7 @@ CONF_EXPIRES_IN: Final = "expires_in"
 
 DEFAULT_NAME: Final = "Laddel EV Charging"
 DEFAULT_SCAN_INTERVAL: Final = 300  # 5 minutes
+CHARGING_SCAN_INTERVAL: Final = 60   # 1 minute when charging
 
 # API endpoints
 BASE_URL: Final = "https://api.laddel.no/v1"
@@ -21,6 +22,10 @@ NOTIFICATION_SYNC_ENDPOINT: Final = "/api/notification/synchronize-token"
 CURRENT_SESSION_ENDPOINT: Final = "/api/session/get-current-session"
 CHARGER_OPERATING_MODE_ENDPOINT: Final = "/api/charger/operating-mode"
 FACILITY_INFO_ENDPOINT: Final = "/api/facility/information"
+HISTORY_SESSIONS_ENDPOINT: Final = "/api/history/previous-sessions"
+STOP_SESSION_ENDPOINT: Final = "/api/session/stop/jobs/schedule"
+START_SESSION_ENDPOINT: Final = "/api/session/start/jobs/schedule"
+LATEST_CHARGERS_ENDPOINT: Final = "/api/history/latest-used-chargers"
 
 # OAuth2 endpoints
 OAUTH2_AUTHORIZE: Final = f"{AUTH_URL}/protocol/openid-connect/auth"

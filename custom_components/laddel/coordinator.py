@@ -18,11 +18,16 @@ from .const import (
     CONF_TOKEN_TYPE,
     CONF_EXPIRES_IN,
     DEFAULT_SCAN_INTERVAL,
+    CHARGING_SCAN_INTERVAL,
     SUBSCRIPTION_ENDPOINT,
     NOTIFICATION_SYNC_ENDPOINT,
     CURRENT_SESSION_ENDPOINT,
     CHARGER_OPERATING_MODE_ENDPOINT,
     FACILITY_INFO_ENDPOINT,
+    HISTORY_SESSIONS_ENDPOINT,
+    STOP_SESSION_ENDPOINT,
+    START_SESSION_ENDPOINT,
+    LATEST_CHARGERS_ENDPOINT,
     USER_AGENT,
     APP_HEADER,
 )
@@ -54,6 +59,11 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
         
         # Device information
         self.device_info = None
+        
+        # Charging state for dynamic polling
+        self._is_charging = False
+        self._last_session_id = None
+        self._latest_charger_id = None
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data via Laddel API."""
@@ -71,9 +81,15 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
             try:
                 session_data = await self._fetch_current_session()
                 data["current_session"] = session_data
+                
+                # Check if charging status changed for dynamic polling
+                await self._update_charging_state(session_data)
+                
             except Exception as e:
                 _LOGGER.warning("Failed to fetch current session: %s", e)
                 data["current_session"] = None
+                # Reset charging state if we can't fetch session data
+                await self._update_charging_state(None)
 
             # Get facility ID from session data or subscription data
             facility_id = None
@@ -112,15 +128,40 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.warning("Failed to fetch facility info: %s", e)
                 data["facility"] = None
 
-            # Fetch charger operating mode if we have a charger ID
+            # Fetch latest used chargers
+            try:
+                latest_chargers = await self._fetch_latest_chargers()
+                data["latest_chargers"] = latest_chargers
+                
+                # Store the latest charger ID for controls
+                if latest_chargers and latest_chargers.get("chargers"):
+                    self._latest_charger_id = latest_chargers["chargers"][0].get("chargerId")
+            except Exception as e:
+                _LOGGER.warning("Failed to fetch latest chargers: %s", e)
+                data["latest_chargers"] = None
+
+            # Fetch charger operating mode for current session charger or latest charger
+            charger_id = None
             if data.get("current_session") and data["current_session"].get("chargerId"):
+                charger_id = data["current_session"]["chargerId"]
+            elif self._latest_charger_id:
+                charger_id = self._latest_charger_id
+                
+            if charger_id:
                 try:
-                    charger_id = data["current_session"]["chargerId"]
                     charger_data = await self._fetch_charger_operating_mode(charger_id)
                     data["charger_operating_mode"] = charger_data
                 except Exception as e:
                     _LOGGER.warning("Failed to fetch charger operating mode: %s", e)
                     data["charger_operating_mode"] = None
+
+            # Fetch recent charging sessions for cost tracking
+            try:
+                recent_sessions = await self._fetch_recent_sessions()
+                data["recent_sessions"] = recent_sessions
+            except Exception as e:
+                _LOGGER.warning("Failed to fetch recent sessions: %s", e)
+                data["recent_sessions"] = None
 
             data["last_update"] = datetime.now().isoformat()
             return data
@@ -306,4 +347,172 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
                     return True
         except Exception as e:
             _LOGGER.error("Error syncing notification token: %s", e)
+            return False
+
+    async def _update_charging_state(self, session_data: dict[str, Any] | None):
+        """Update charging state and adjust polling interval."""
+        current_charging = False
+        current_session_id = None
+        
+        if session_data:
+            session_type = session_data.get("type", "").upper()
+            charger_mode = session_data.get("chargerOperatingMode", "")
+            current_charging = (session_type == "ACTIVE" and charger_mode == "CHARGING")
+            current_session_id = session_data.get("sessionId")
+        
+        # Check if charging state changed
+        if current_charging != self._is_charging:
+            self._is_charging = current_charging
+            
+            # Adjust polling interval
+            new_interval = CHARGING_SCAN_INTERVAL if current_charging else DEFAULT_SCAN_INTERVAL
+            self.update_interval = timedelta(seconds=new_interval)
+            
+            _LOGGER.info(
+                "Charging state changed to %s, polling interval set to %d seconds",
+                "CHARGING" if current_charging else "NOT CHARGING",
+                new_interval
+            )
+        
+        # Track session changes for cost updates
+        if current_session_id != self._last_session_id:
+            self._last_session_id = current_session_id
+            if current_session_id:
+                _LOGGER.info("New charging session started: %s", current_session_id)
+            elif self._last_session_id:
+                _LOGGER.info("Charging session ended: %s", self._last_session_id)
+
+    async def _fetch_recent_sessions(self, page: int = 0) -> dict[str, Any]:
+        """Fetch recent charging sessions for cost tracking."""
+        if not self.access_token:
+            raise UpdateFailed("No access token available")
+
+        url = f"{BASE_URL}{HISTORY_SESSIONS_ENDPOINT}?page={page}"
+        
+        headers = {
+            "User-Agent": USER_AGENT,
+            "x-app": APP_HEADER,
+            "Accept-Encoding": "gzip",
+            "Authorization": f"Bearer {self.access_token}",
+            "Host": "api.laddel.no",
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status != 200:
+                    text = await response.text()
+                    _LOGGER.error("Failed to fetch recent sessions: %s - %s", response.status, text)
+                    raise UpdateFailed("Failed to fetch recent sessions")
+
+                return await response.json()
+
+    async def stop_charging_session(self, session_id: str) -> bool:
+        """Stop an active charging session."""
+        if not self.access_token:
+            _LOGGER.error("No access token available for stopping session")
+            return False
+
+        url = f"{BASE_URL}{STOP_SESSION_ENDPOINT}"
+        
+        headers = {
+            "User-Agent": USER_AGENT,
+            "x-app": APP_HEADER,
+            "Accept-Encoding": "gzip",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.access_token}",
+            "Host": "api.laddel.no",
+        }
+
+        data = {"sessionId": session_id}
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=data, headers=headers) as response:
+                    if response.status in [200, 204]:
+                        _LOGGER.info("Successfully scheduled stop for session: %s", session_id)
+                        return True
+                    else:
+                        text = await response.text()
+                        _LOGGER.error("Failed to stop session: %s - %s", response.status, text)
+                        return False
+        except Exception as e:
+            _LOGGER.error("Error stopping charging session: %s", e)
+            return False
+
+    async def _fetch_latest_chargers(self) -> dict[str, Any]:
+        """Fetch latest used chargers."""
+        if not self.access_token:
+            raise UpdateFailed("No access token available")
+
+        url = f"{BASE_URL}{LATEST_CHARGERS_ENDPOINT}"
+        
+        headers = {
+            "User-Agent": USER_AGENT,
+            "x-app": APP_HEADER,
+            "Accept-Encoding": "gzip",
+            "Authorization": f"Bearer {self.access_token}",
+            "Host": "api.laddel.no",
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status != 200:
+                    text = await response.text()
+                    _LOGGER.error("Failed to fetch latest chargers: %s - %s", response.status, text)
+                    raise UpdateFailed("Failed to fetch latest chargers")
+
+                return await response.json()
+
+    async def start_charging_session(
+        self, 
+        charger_id: str | None = None,
+        scheduled_start_time: str | None = None,
+        scheduled_end_time: str | None = None,
+        registration_number: str | None = None,
+        request_private_session: bool = False
+    ) -> bool:
+        """Start a charging session."""
+        if not self.access_token:
+            _LOGGER.error("No access token available for starting session")
+            return False
+
+        # Use latest charger if no specific charger provided
+        if not charger_id:
+            charger_id = self._latest_charger_id
+            
+        if not charger_id:
+            _LOGGER.error("No charger ID available for starting session")
+            return False
+
+        url = f"{BASE_URL}{START_SESSION_ENDPOINT}"
+        
+        headers = {
+            "User-Agent": USER_AGENT,
+            "x-app": APP_HEADER,
+            "Accept-Encoding": "gzip",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.access_token}",
+            "Host": "api.laddel.no",
+        }
+
+        data = {
+            "chargerId": charger_id,
+            "scheduledStartTime": scheduled_start_time,
+            "scheduledEndTime": scheduled_end_time,
+            "registrationNumber": registration_number,
+            "requestPrivateSession": request_private_session,
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=data, headers=headers) as response:
+                    if response.status in [200, 204]:
+                        _LOGGER.info("Successfully scheduled start for charger: %s", charger_id)
+                        return True
+                    else:
+                        text = await response.text()
+                        _LOGGER.error("Failed to start session: %s - %s", response.status, text)
+                        return False
+        except Exception as e:
+            _LOGGER.error("Error starting charging session: %s", e)
             return False
