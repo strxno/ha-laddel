@@ -48,6 +48,7 @@ class LaddelDirectOAuth2FlowHandler(config_entry_oauth2_flow.AbstractOAuth2FlowH
         self.execution = None
         self.tab_id = None
         self.client_data = None
+        self.session = None
 
     def _generate_pkce(self):
         """Generate PKCE code verifier and challenge."""
@@ -161,9 +162,11 @@ class LaddelDirectOAuth2FlowHandler(config_entry_oauth2_flow.AbstractOAuth2FlowH
         # Create the authorization URL
         auth_url = f"{OAUTH2_AUTHORIZE}?{self._build_query_string(auth_params)}"
         
-        # Visit the page to get cookies and the HTML login page
-        async with aiohttp.ClientSession() as session:
-            async with session.get(auth_url) as response:
+        # Create session with cookies to maintain state
+        self.session = aiohttp.ClientSession()
+        
+        try:
+            async with self.session.get(auth_url) as response:
                 if response.status != 200:
                     raise Exception(f"Failed to get authorization page: {response.status}")
                 
@@ -173,6 +176,7 @@ class LaddelDirectOAuth2FlowHandler(config_entry_oauth2_flow.AbstractOAuth2FlowH
                 form_action_url = self._extract_form_action(html_content)
                 
                 if not form_action_url:
+                    _LOGGER.error("Could not find form action URL. HTML snippet: %s", html_content[:500])
                     raise Exception("Could not find form action URL in HTML")
                 
                 # Parse the form action URL to extract session parameters
@@ -186,8 +190,14 @@ class LaddelDirectOAuth2FlowHandler(config_entry_oauth2_flow.AbstractOAuth2FlowH
                 self.tab_id = query_params.get('tab_id', [''])[0]
                 self.client_data = query_params.get('client_data', [''])[0]
                 
+                _LOGGER.debug("Extracted parameters - session_code: %s, execution: %s, tab_id: %s", 
+                             bool(self.session_code), bool(self.execution), bool(self.tab_id))
+                
                 if not self.session_code or not self.execution or not self.tab_id:
-                    raise Exception("Missing required parameters from form action")
+                    raise Exception(f"Missing required parameters: session_code={bool(self.session_code)}, execution={bool(self.execution)}, tab_id={bool(self.tab_id)}")
+        except Exception as e:
+            await self.session.close()
+            raise e
                 
 
 
@@ -227,8 +237,8 @@ class LaddelDirectOAuth2FlowHandler(config_entry_oauth2_flow.AbstractOAuth2FlowH
             "Referer": f"{OAUTH2_AUTHORIZE}?{self._build_query_string({'redirect_uri': OAUTH2_REDIRECT_URI, 'client_id': OAUTH2_CLIENT_ID, 'response_type': 'code', 'scope': OAUTH2_SCOPE, 'code_challenge': self.code_challenge, 'code_challenge_method': 'S256', 'state': self.state, 'nonce': self.nonce})}"
         }
         
-        async with aiohttp.ClientSession() as session:
-            async with session.post(auth_url, data=post_data, headers=headers, allow_redirects=False) as response:
+        try:
+            async with self.session.post(auth_url, data=post_data, headers=headers, allow_redirects=False) as response:
                 # Check if we got redirected (302 is success)
                 if response.status == 302:
                     redirect_location = response.headers.get('Location')
@@ -248,6 +258,8 @@ class LaddelDirectOAuth2FlowHandler(config_entry_oauth2_flow.AbstractOAuth2FlowH
                     _LOGGER.error("Authentication failed: %s", response.status)
                 
                 return None
+        finally:
+            await self.session.close()
 
     async def _exchange_code_for_tokens(self, authorization_code: str) -> dict[str, Any]:
         """Exchange authorization code for access and refresh tokens using PKCE."""
