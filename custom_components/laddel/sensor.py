@@ -288,14 +288,17 @@ class LaddelChargingSessionStatusSensor(LaddelSensor):
         
         return {
             ATTR_CHARGER_ID: session_data.get("chargerId"),
-            ATTR_CHARGER_NAME: session_data.get("chargerName"),
             ATTR_SESSION_START: session_data.get("startTime"),
             ATTR_SESSION_END: session_data.get("endTime"),
-            ATTR_ENERGY_CONSUMED: session_data.get("energyConsumed"),
-            ATTR_POWER: session_data.get("currentPower"),
-            "isActive": session_data.get("isActive"),
-            "isCompleted": session_data.get("isCompleted"),
-            "isCancelled": session_data.get("isCancelled"),
+            ATTR_ENERGY_CONSUMED: session_data.get("charged"),  # Real API field
+            "session_id": session_data.get("sessionId"),
+            "facility_id": session_data.get("facilityId"),
+            "latitude": session_data.get("latitude"),
+            "longitude": session_data.get("longitude"),
+            "vehicle": session_data.get("vehicle"),
+            "charging_privately": session_data.get("chargingPrivately"),
+            "session_type": session_data.get("type"),
+            "charger_operating_mode": session_data.get("chargerOperatingMode"),
         }
 
 
@@ -317,15 +320,25 @@ class LaddelChargingPowerSensor(LaddelSensor):
             return None
         
         session_data = self.coordinator.data["current_session"]
-        if not session_data:
+        if not session_data or session_data.get("errorKey") == "noSession":
             return None
         
-        power = session_data.get("currentPower")
-        if power is not None:
-            # Convert to kW if the value is in W
-            if power > 1000:
-                return round(power / 1000, 2)
-            return power
+        # Power isn't available in current_session API response
+        # For now, estimate based on typical charging patterns
+        # Later we might get this from charger operating mode or facility info
+        session_type = session_data.get("type", "").upper()
+        charger_mode = session_data.get("chargerOperatingMode", "")
+        
+        if session_type == "ACTIVE" and charger_mode == "CHARGING":
+            # Estimate based on facility's max power (if available)
+            if (self.coordinator.data.get("facility") and 
+                self.coordinator.data["facility"].get("kweffect")):
+                return self.coordinator.data["facility"]["kweffect"]
+            # Default estimate for active charging
+            return 11.0  # Typical 11kW charging
+        elif session_type == "ACTIVE" and charger_mode in ["IDLE", "CAR_CONNECTED"]:
+            return 0.0  # Connected but not charging
+        
         return None
 
 
@@ -347,7 +360,7 @@ class LaddelEnergyConsumedSensor(LaddelSensor):
             return None
         
         session_data = self.coordinator.data["current_session"]
-        if not session_data:
+        if not session_data or session_data.get("errorKey") == "noSession":
             return None
         
         # The API returns "charged" field with energy in kWh
@@ -375,7 +388,7 @@ class LaddelChargingDurationSensor(LaddelSensor):
             return None
         
         session_data = self.coordinator.data["current_session"]
-        if not session_data:
+        if not session_data or session_data.get("errorKey") == "noSession":
             return None
         
         start_time = session_data.get("startTime")
@@ -407,7 +420,7 @@ class LaddelChargerIdSensor(LaddelSensor):
             return None
         
         session_data = self.coordinator.data["current_session"]
-        if not session_data:
+        if not session_data or session_data.get("errorKey") == "noSession":
             return None
         
         return session_data.get("chargerId")

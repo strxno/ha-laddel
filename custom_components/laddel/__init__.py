@@ -25,8 +25,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     try:
         await coordinator.async_config_entry_first_refresh()
-    except ConfigEntryNotReady:
-        _LOGGER.error("Failed to setup Laddel integration")
+    except ConfigEntryNotReady as err:
+        _LOGGER.error("Failed to setup Laddel integration - will retry: %s", err)
+        raise ConfigEntryNotReady from err
+    except Exception as err:
+        _LOGGER.error("Unexpected error during Laddel setup: %s", err)
         return False
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
