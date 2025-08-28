@@ -112,6 +112,8 @@ class LaddelSubscriptionStatusSensor(LaddelSensor):
             return None
         
         subscription_data = self.coordinator.data["subscription"]
+        if not subscription_data:
+            return None
         active_subs = subscription_data.get("activeSubscriptions", [])
         
         if active_subs:
@@ -125,6 +127,8 @@ class LaddelSubscriptionStatusSensor(LaddelSensor):
             return {}
         
         subscription_data = self.coordinator.data["subscription"]
+        if not subscription_data:
+            return {}
         active_subs = subscription_data.get("activeSubscriptions", [])
         
         if not active_subs:
@@ -159,6 +163,8 @@ class LaddelMonthlyFeeSensor(LaddelSensor):
             return None
         
         subscription_data = self.coordinator.data["subscription"]
+        if not subscription_data:
+            return None
         active_subs = subscription_data.get("activeSubscriptions", [])
         
         if active_subs:
@@ -182,6 +188,8 @@ class LaddelFacilityNameSensor(LaddelSensor):
             return None
         
         subscription_data = self.coordinator.data["subscription"]
+        if not subscription_data:
+            return None
         active_subs = subscription_data.get("activeSubscriptions", [])
         
         if active_subs:
@@ -207,6 +215,8 @@ class LaddelDaysRemainingSensor(LaddelSensor):
             return None
         
         subscription_data = self.coordinator.data["subscription"]
+        if not subscription_data:
+            return None
         active_subs = subscription_data.get("activeSubscriptions", [])
         
         if not active_subs:

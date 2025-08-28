@@ -69,6 +69,8 @@ class LaddelActiveSubscriptionBinarySensor(LaddelBinarySensor):
             return None
         
         subscription_data = self.coordinator.data["subscription"]
+        if not subscription_data:
+            return None
         active_subs = subscription_data.get("activeSubscriptions", [])
         
         return len(active_subs) > 0 and any(
@@ -82,6 +84,8 @@ class LaddelActiveSubscriptionBinarySensor(LaddelBinarySensor):
             return {}
         
         subscription_data = self.coordinator.data["subscription"]
+        if not subscription_data:
+            return {}
         active_subs = subscription_data.get("activeSubscriptions", [])
         
         if not active_subs:

@@ -196,6 +196,58 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
         
         return needs_refresh
 
+    async def _make_api_request(self, url: str, method: str = "GET", data: dict = None, retry_on_401: bool = True) -> dict[str, Any]:
+        """Make API request with automatic token refresh on 401."""
+        headers = {
+            "User-Agent": USER_AGENT,
+            "x-app": APP_HEADER,
+            "Accept-Encoding": "gzip",
+            "Authorization": f"Bearer {self.access_token}",
+            "Host": "api.laddel.no",
+        }
+        
+        if method == "POST":
+            headers["Content-Type"] = "application/json"
+
+        async with aiohttp.ClientSession() as session:
+            if method == "GET":
+                async with session.get(url, headers=headers) as response:
+                    if response.status == 401 and retry_on_401:
+                        _LOGGER.debug("Got 401, refreshing token and retrying")
+                        await self._refresh_access_token()
+                        # Update authorization header with new token
+                        headers["Authorization"] = f"Bearer {self.access_token}"
+                        # Retry the request
+                        async with session.get(url, headers=headers) as retry_response:
+                            if retry_response.status != 200:
+                                text = await retry_response.text()
+                                _LOGGER.error("API request failed after token refresh: %s - %s", retry_response.status, text)
+                                raise UpdateFailed(f"API request failed: {retry_response.status}")
+                            return await retry_response.json()
+                    elif response.status != 200:
+                        text = await response.text()
+                        _LOGGER.error("API request failed: %s - %s", response.status, text)
+                        raise UpdateFailed(f"API request failed: {response.status}")
+                    return await response.json()
+            else:  # POST
+                json_data = data if data else {}
+                async with session.post(url, headers=headers, json=json_data) as response:
+                    if response.status == 401 and retry_on_401:
+                        _LOGGER.debug("Got 401, refreshing token and retrying")
+                        await self._refresh_access_token()
+                        headers["Authorization"] = f"Bearer {self.access_token}"
+                        async with session.post(url, headers=headers, json=json_data) as retry_response:
+                            if retry_response.status not in [200, 201]:
+                                text = await retry_response.text()
+                                _LOGGER.error("API request failed after token refresh: %s - %s", retry_response.status, text)
+                                raise UpdateFailed(f"API request failed: {retry_response.status}")
+                            return await retry_response.json()
+                    elif response.status not in [200, 201]:
+                        text = await response.text()
+                        _LOGGER.error("API request failed: %s - %s", response.status, text)
+                        raise UpdateFailed(f"API request failed: {response.status}")
+                    return await response.json()
+
     async def _refresh_access_token(self) -> None:
         """Refresh the access token using the refresh token."""
         if not self.refresh_token:
@@ -253,23 +305,7 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed("No access token available")
 
         url = f"{BASE_URL}{SUBSCRIPTION_ENDPOINT}"
-        
-        headers = {
-            "User-Agent": USER_AGENT,
-            "x-app": APP_HEADER,
-            "Accept-Encoding": "gzip",
-            "Authorization": f"Bearer {self.access_token}",
-            "Host": "api.laddel.no",
-        }
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                if response.status != 200:
-                    text = await response.text()
-                    _LOGGER.error("Failed to fetch subscription data: %s - %s", response.status, text)
-                    raise UpdateFailed("Failed to fetch subscription data")
-
-                return await response.json()
+        return await self._make_api_request(url)
 
     async def _fetch_current_session(self) -> dict[str, Any]:
         """Fetch current charging session from Laddel API."""
@@ -277,23 +313,7 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed("No access token available")
 
         url = f"{BASE_URL}{CURRENT_SESSION_ENDPOINT}"
-        
-        headers = {
-            "User-Agent": USER_AGENT,
-            "x-app": APP_HEADER,
-            "Accept-Encoding": "gzip",
-            "Authorization": f"Bearer {self.access_token}",
-            "Host": "api.laddel.no",
-        }
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                if response.status != 200:
-                    text = await response.text()
-                    _LOGGER.error("Failed to fetch current session: %s - %s", response.status, text)
-                    raise UpdateFailed("Failed to fetch current session")
-
-                return await response.json()
+        return await self._make_api_request(url)
 
     async def _fetch_facility_info(self, facility_id: str) -> dict[str, Any]:
         """Fetch facility information from Laddel API."""
@@ -301,23 +321,7 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed("No access token available")
 
         url = f"{BASE_URL}{FACILITY_INFO_ENDPOINT}?id={facility_id}"
-        
-        headers = {
-            "User-Agent": USER_AGENT,
-            "x-app": APP_HEADER,
-            "Accept-Encoding": "gzip",
-            "Authorization": f"Bearer {self.access_token}",
-            "Host": "api.laddel.no",
-        }
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                if response.status != 200:
-                    text = await response.text()
-                    _LOGGER.error("Failed to fetch facility info: %s - %s", response.status, text)
-                    raise UpdateFailed("Failed to fetch facility info")
-
-                return await response.json()
+        return await self._make_api_request(url)
 
     async def _fetch_charger_operating_mode(self, charger_id: str) -> dict[str, Any]:
         """Fetch charger operating mode from Laddel API."""
