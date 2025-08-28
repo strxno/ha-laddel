@@ -3,27 +3,17 @@
     "step": {
       "user": {
         "data": {
-          "auth_method": "Authentication Method"
+          "username": "Email",
+          "password": "Password"
         },
-        "description": "Choose how you want to authenticate with Laddel.",
+        "description": "Enter your Laddel account credentials to connect to the EV charging service.",
         "title": "Laddel EV Charging"
-      },
-      "oauth_info": {
-        "description": "OAuth2 authentication requires additional server setup for redirect URIs. For now, please use the manual refresh token method.\n\nTo get your refresh token:\n1. Install a network monitoring app on your phone\n2. Open the Laddel app and log in\n3. Monitor network traffic to id.laddel.no\n4. Find the refresh_token in OAuth requests\n5. Copy the refresh token value\n\nClick 'Back' to use the refresh token method."
-      },
-      "refresh_token": {
-        "data": {
-          "refresh_token": "Refresh Token"
-        },
-        "description": "Enter your Laddel refresh token to connect to the EV charging service.",
-        "title": "Laddel EV Charging - Refresh Token"
       }
     },
     "error": {
-      "refresh_token_required": "Refresh token is required",
-      "unknown": "Unexpected error occurred",
-      "oauth_error": "OAuth authentication failed",
-      "https_required": "HTTPS is required for OAuth2 authentication"
+      "missing_credentials": "Email and password are required",
+      "auth_failed": "Authentication failed. Please check your credentials.",
+      "unknown": "Unexpected error occurred"
     },
     "abort": {
       "already_configured": "Device is already configured"

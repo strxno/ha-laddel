@@ -52,17 +52,13 @@ The integration can be configured through the Home Assistant UI:
 
 **Settings** → **Devices & Services** → **Add Integration** → **Laddel EV Charging**
 
-### Authentication Options
+### Authentication
 
-#### OAuth2 with PKCE (Recommended)
 Simply enter your Laddel account email and password. The integration will:
 - Automatically handle OAuth2 authentication using PKCE (Proof Key for Code Exchange)
 - Securely obtain and manage access tokens
 - Automatically refresh tokens when needed
 - Follow OAuth2 security best practices
-
-#### Manual Refresh Token (Advanced)
-For advanced users who prefer to extract refresh tokens manually from the Laddel mobile app.
 
 ## Entities
 
