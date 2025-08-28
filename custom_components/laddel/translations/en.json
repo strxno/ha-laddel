@@ -12,7 +12,8 @@
     },
     "error": {
       "missing_credentials": "Email and password are required",
-      "auth_failed": "Authentication failed. Please check your credentials.",
+      "invalid_credentials": "Invalid email or password. Please check your credentials.",
+      "auth_failed": "Authentication failed. Please try again later.",
       "unknown": "Unexpected error occurred"
     },
     "abort": {

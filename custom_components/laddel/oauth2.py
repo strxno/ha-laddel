@@ -32,6 +32,11 @@ class LaddelDirectOAuth2FlowHandler(config_entry_oauth2_flow.AbstractOAuth2FlowH
     
     DOMAIN = DOMAIN
     
+    @property
+    def logger(self):
+        """Return logger."""
+        return _LOGGER
+    
     def __init__(self):
         """Initialize the direct OAuth2 flow handler."""
         super().__init__()

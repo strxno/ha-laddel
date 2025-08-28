@@ -46,7 +46,10 @@ class LaddelConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     
                 except Exception as e:
                     _LOGGER.error("Authentication failed: %s", e)
-                    errors["base"] = "auth_failed"
+                    if "authentication failed" in str(e).lower():
+                        errors["base"] = "invalid_credentials"
+                    else:
+                        errors["base"] = "auth_failed"
             else:
                 errors["base"] = "missing_credentials"
 
