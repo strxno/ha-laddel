@@ -329,23 +329,7 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed("No access token available")
 
         url = f"{BASE_URL}{CHARGER_OPERATING_MODE_ENDPOINT}?chargerId={charger_id}"
-        
-        headers = {
-            "User-Agent": USER_AGENT,
-            "x-app": APP_HEADER,
-            "Accept-Encoding": "gzip",
-            "Authorization": f"Bearer {self.access_token}",
-            "Host": "api.laddel.no",
-        }
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                if response.status != 200:
-                    text = await response.text()
-                    _LOGGER.error("Failed to fetch charger operating mode: %s - %s", response.status, text)
-                    raise UpdateFailed("Failed to fetch charger operating mode")
-
-                return await response.json()
+        return await self._make_api_request(url)
 
     async def sync_notification_token(self, fcm_token: str, installation_id: str) -> bool:
         """Sync notification token with Laddel API."""
@@ -422,23 +406,7 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed("No access token available")
 
         url = f"{BASE_URL}{HISTORY_SESSIONS_ENDPOINT}?page={page}"
-        
-        headers = {
-            "User-Agent": USER_AGENT,
-            "x-app": APP_HEADER,
-            "Accept-Encoding": "gzip",
-            "Authorization": f"Bearer {self.access_token}",
-            "Host": "api.laddel.no",
-        }
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                if response.status != 200:
-                    text = await response.text()
-                    _LOGGER.error("Failed to fetch recent sessions: %s - %s", response.status, text)
-                    raise UpdateFailed("Failed to fetch recent sessions")
-
-                return await response.json()
+        return await self._make_api_request(url)
 
     async def stop_charging_session(self, session_id: str) -> bool:
         """Stop an active charging session."""
@@ -447,28 +415,12 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
             return False
 
         url = f"{BASE_URL}{STOP_SESSION_ENDPOINT}"
-        
-        headers = {
-            "User-Agent": USER_AGENT,
-            "x-app": APP_HEADER,
-            "Accept-Encoding": "gzip",
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.access_token}",
-            "Host": "api.laddel.no",
-        }
-
         data = {"sessionId": session_id}
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=data, headers=headers) as response:
-                    if response.status in [200, 204]:
-                        _LOGGER.info("Successfully scheduled stop for session: %s", session_id)
-                        return True
-                    else:
-                        text = await response.text()
-                        _LOGGER.error("Failed to stop session: %s - %s", response.status, text)
-                        return False
+            await self._make_api_request(url, method="POST", data=data)
+            _LOGGER.info("Successfully scheduled stop for session: %s", session_id)
+            return True
         except Exception as e:
             _LOGGER.error("Error stopping charging session: %s", e)
             return False
@@ -479,23 +431,7 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed("No access token available")
 
         url = f"{BASE_URL}{LATEST_CHARGERS_ENDPOINT}"
-        
-        headers = {
-            "User-Agent": USER_AGENT,
-            "x-app": APP_HEADER,
-            "Accept-Encoding": "gzip",
-            "Authorization": f"Bearer {self.access_token}",
-            "Host": "api.laddel.no",
-        }
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                if response.status != 200:
-                    text = await response.text()
-                    _LOGGER.error("Failed to fetch latest chargers: %s - %s", response.status, text)
-                    raise UpdateFailed("Failed to fetch latest chargers")
-
-                return await response.json()
+        return await self._make_api_request(url)
 
     async def start_charging_session(
         self, 
@@ -519,16 +455,6 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
             return False
 
         url = f"{BASE_URL}{START_SESSION_ENDPOINT}"
-        
-        headers = {
-            "User-Agent": USER_AGENT,
-            "x-app": APP_HEADER,
-            "Accept-Encoding": "gzip",
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.access_token}",
-            "Host": "api.laddel.no",
-        }
-
         data = {
             "chargerId": charger_id,
             "scheduledStartTime": scheduled_start_time,
@@ -538,15 +464,9 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=data, headers=headers) as response:
-                    if response.status in [200, 204]:
-                        _LOGGER.info("Successfully scheduled start for charger: %s", charger_id)
-                        return True
-                    else:
-                        text = await response.text()
-                        _LOGGER.error("Failed to start session: %s - %s", response.status, text)
-                        return False
+            await self._make_api_request(url, method="POST", data=data)
+            _LOGGER.info("Successfully scheduled start for charger: %s", charger_id)
+            return True
         except Exception as e:
             _LOGGER.error("Error starting charging session: %s", e)
             return False
