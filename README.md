@@ -1,5 +1,5 @@
 # Laddel EV Charging Integration for Home Assistant
-
+Version 1.0.0
 _Unofficial community integration to monitor your Laddel EV charging sessions in Home Assistant._
 
 **⚠️ This is a community-developed integration and is not officially supported by Laddel.**
