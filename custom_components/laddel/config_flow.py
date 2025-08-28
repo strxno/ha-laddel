@@ -40,9 +40,24 @@ class LaddelConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     oauth_handler.context = self.context
                     oauth_handler.flow_context = {"username": username, "password": password}
                     
-                    # Authenticate and get tokens
-                    result = await oauth_handler.async_step_authenticate()
-                    return result
+                    # Generate PKCE and get session parameters
+                    oauth_handler._generate_pkce()
+                    await oauth_handler._get_session_parameters()
+                    
+                    # Authenticate and get authorization code
+                    auth_code = await oauth_handler._authenticate_with_credentials()
+                    
+                    if auth_code:
+                        # Exchange code for tokens
+                        tokens = await oauth_handler._exchange_code_for_tokens(auth_code)
+                        
+                        # Create config entry in the proper config flow context
+                        return self.async_create_entry(
+                            title="Laddel EV Charging",
+                            data=tokens,
+                        )
+                    else:
+                        errors["base"] = "invalid_credentials"
                     
                 except Exception as e:
                     _LOGGER.error("Authentication failed: %s", e)
