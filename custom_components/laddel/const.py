@@ -20,6 +20,7 @@ SUBSCRIPTION_ENDPOINT: Final = "/api/facility/subscription"
 NOTIFICATION_SYNC_ENDPOINT: Final = "/api/notification/synchronize-token"
 CURRENT_SESSION_ENDPOINT: Final = "/api/session/get-current-session"
 CHARGER_OPERATING_MODE_ENDPOINT: Final = "/api/charger/operating-mode"
+FACILITY_INFO_ENDPOINT: Final = "/api/facility/information"
 
 # OAuth2 endpoints
 OAUTH2_AUTHORIZE: Final = f"{AUTH_URL}/protocol/openid-connect/auth"

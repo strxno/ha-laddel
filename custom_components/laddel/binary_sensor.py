@@ -44,6 +44,11 @@ class LaddelBinarySensor(BinarySensorEntity):
         """Return True if entity is available."""
         return self.coordinator.last_update_success
 
+    @property
+    def device_info(self):
+        """Return device information."""
+        return self.coordinator.device_info
+
 
 class LaddelActiveSubscriptionBinarySensor(LaddelBinarySensor):
     """Binary sensor for active subscription status."""
@@ -116,7 +121,8 @@ class LaddelActiveChargingSessionBinarySensor(LaddelBinarySensor):
         if not session_data:
             return False
         
-        return session_data.get("isActive", False)
+        # Check if session type is ACTIVE
+        return session_data.get("type", "").upper() == "ACTIVE"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

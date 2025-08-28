@@ -22,6 +22,7 @@ from .const import (
     NOTIFICATION_SYNC_ENDPOINT,
     CURRENT_SESSION_ENDPOINT,
     CHARGER_OPERATING_MODE_ENDPOINT,
+    FACILITY_INFO_ENDPOINT,
     USER_AGENT,
     APP_HEADER,
 )
@@ -50,6 +51,9 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
             name="Laddel",
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
         )
+        
+        # Device information
+        self.device_info = None
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data via Laddel API."""
@@ -63,21 +67,50 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
             # Fetch all available data
             data = {}
             
-            # Fetch subscription data
-            try:
-                subscription_data = await self._fetch_subscription_data()
-                data["subscription"] = subscription_data
-            except Exception as e:
-                _LOGGER.warning("Failed to fetch subscription data: %s", e)
-                data["subscription"] = None
-
-            # Fetch current charging session
+            # Fetch current charging session first (contains facility ID)
             try:
                 session_data = await self._fetch_current_session()
                 data["current_session"] = session_data
             except Exception as e:
                 _LOGGER.warning("Failed to fetch current session: %s", e)
                 data["current_session"] = None
+
+            # Get facility ID from session data or subscription data
+            facility_id = None
+            if data.get("current_session"):
+                facility_id = data["current_session"].get("facilityId")
+
+            # Fetch subscription data
+            try:
+                subscription_data = await self._fetch_subscription_data()
+                data["subscription"] = subscription_data
+                
+                # If we don't have facility ID from session, get it from subscription
+                if not facility_id and subscription_data and subscription_data.get("activeSubscriptions"):
+                    facility_id = subscription_data["activeSubscriptions"][0].get("facilityId")
+                    
+            except Exception as e:
+                _LOGGER.warning("Failed to fetch subscription data: %s", e)
+                data["subscription"] = None
+
+            # Fetch facility information using the facility ID
+            try:
+                if facility_id:
+                    facility_data = await self._fetch_facility_info(str(facility_id))
+                    data["facility"] = facility_data
+                    
+                    # Create device info from facility data
+                    facility_name = facility_data.get("facilityName", "Laddel Account")
+                    self.device_info = {
+                        "identifiers": {("laddel", str(facility_id))},
+                        "name": facility_name,
+                        "manufacturer": "Laddel",
+                        "model": "EV Charging Facility",
+                        "sw_version": "1.0",
+                    }
+            except Exception as e:
+                _LOGGER.warning("Failed to fetch facility info: %s", e)
+                data["facility"] = None
 
             # Fetch charger operating mode if we have a charger ID
             if data.get("current_session") and data["current_session"].get("chargerId"):
@@ -188,6 +221,30 @@ class LaddelDataUpdateCoordinator(DataUpdateCoordinator):
                     text = await response.text()
                     _LOGGER.error("Failed to fetch current session: %s - %s", response.status, text)
                     raise UpdateFailed("Failed to fetch current session")
+
+                return await response.json()
+
+    async def _fetch_facility_info(self, facility_id: str) -> dict[str, Any]:
+        """Fetch facility information from Laddel API."""
+        if not self.access_token:
+            raise UpdateFailed("No access token available")
+
+        url = f"{BASE_URL}{FACILITY_INFO_ENDPOINT}?id={facility_id}"
+        
+        headers = {
+            "User-Agent": USER_AGENT,
+            "x-app": APP_HEADER,
+            "Accept-Encoding": "gzip",
+            "Authorization": f"Bearer {self.access_token}",
+            "Host": "api.laddel.no",
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status != 200:
+                    text = await response.text()
+                    _LOGGER.error("Failed to fetch facility info: %s - %s", response.status, text)
+                    raise UpdateFailed("Failed to fetch facility info")
 
                 return await response.json()
 

@@ -59,6 +59,10 @@ async def async_setup_entry(
     entities.append(LaddelEnergyConsumedSensor(coordinator, entry))
     entities.append(LaddelChargingDurationSensor(coordinator, entry))
     entities.append(LaddelChargerIdSensor(coordinator, entry))
+    
+    # Add facility sensors
+    entities.append(LaddelElectricityPriceSensor(coordinator, entry))
+    entities.append(LaddelFacilityAddressSensor(coordinator, entry))
 
     async_add_entities(entities)
 
@@ -77,6 +81,11 @@ class LaddelSensor(SensorEntity):
     def available(self) -> bool:
         """Return True if entity is available."""
         return self.coordinator.last_update_success
+
+    @property
+    def device_info(self):
+        """Return device information."""
+        return self.coordinator.device_info
 
 
 class LaddelSubscriptionStatusSensor(LaddelSensor):
@@ -227,15 +236,22 @@ class LaddelChargingSessionStatusSensor(LaddelSensor):
         if not session_data:
             return "No Active Session"
         
-        # Check if there's an active charging session
-        if session_data.get("isActive", False):
-            return "Charging"
-        elif session_data.get("isCompleted", False):
+        # Check session type and status from real API response
+        session_type = session_data.get("type", "").upper()
+        if session_type == "ACTIVE":
+            charger_mode = session_data.get("chargerOperatingMode", "")
+            if charger_mode == "CHARGING":
+                return "Charging"
+            elif charger_mode == "IDLE":
+                return "Connected"
+            else:
+                return "Active"
+        elif session_type == "COMPLETED":
             return "Completed"
-        elif session_data.get("isCancelled", False):
+        elif session_type == "CANCELLED":
             return "Cancelled"
         else:
-            return "Unknown"
+            return session_type if session_type else "Unknown"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -311,12 +327,10 @@ class LaddelEnergyConsumedSensor(LaddelSensor):
         if not session_data:
             return None
         
-        energy = session_data.get("energyConsumed")
+        # The API returns "charged" field with energy in kWh
+        energy = session_data.get("charged")
         if energy is not None:
-            # Convert to kWh if the value is in Wh
-            if energy > 1000:
-                return round(energy / 1000, 2)
-            return energy
+            return round(float(energy), 3)  # Keep 3 decimal places for precision
         return None
 
 
@@ -374,3 +388,98 @@ class LaddelChargerIdSensor(LaddelSensor):
             return None
         
         return session_data.get("chargerId")
+
+
+class LaddelElectricityPriceSensor(LaddelSensor):
+    """Sensor for current electricity price."""
+
+    def __init__(self, coordinator: LaddelDataUpdateCoordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry)
+        self._attr_name = "Electricity Price"
+        self._attr_unique_id = f"{entry.entry_id}_electricity_price"
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_native_unit_of_measurement = "NOK/kWh"
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the native value of the sensor."""
+        if not self.coordinator.data or "facility" not in self.coordinator.data:
+            return None
+        
+        facility_data = self.coordinator.data["facility"]
+        if not facility_data:
+            return None
+        
+        # Return the total price from facility info
+        total_price = facility_data.get("total")
+        if total_price is not None:
+            return round(float(total_price), 2)
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity specific state attributes."""
+        if not self.coordinator.data or "facility" not in self.coordinator.data:
+            return {}
+        
+        facility_data = self.coordinator.data["facility"]
+        if not facility_data:
+            return {}
+        
+        return {
+            "average_electricity_price": facility_data.get("averageElectricityPriceAndDeliveryFee"),
+            "average_surcharge": facility_data.get("averageSurCharge"),
+            "markup": facility_data.get("markup"),
+            "price_type": facility_data.get("priceType"),
+        }
+
+
+class LaddelFacilityAddressSensor(LaddelSensor):
+    """Sensor for facility address."""
+
+    def __init__(self, coordinator: LaddelDataUpdateCoordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry)
+        self._attr_name = "Facility Address"
+        self._attr_unique_id = f"{entry.entry_id}_facility_address"
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the native value of the sensor."""
+        if not self.coordinator.data or "facility" not in self.coordinator.data:
+            return None
+        
+        facility_data = self.coordinator.data["facility"]
+        if not facility_data:
+            return None
+        
+        # Build full address
+        address_parts = []
+        if facility_data.get("address"):
+            address_parts.append(facility_data["address"])
+        if facility_data.get("postalCode"):
+            address_parts.append(facility_data["postalCode"])
+        if facility_data.get("city"):
+            address_parts.append(facility_data["city"])
+        
+        return ", ".join(address_parts) if address_parts else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity specific state attributes."""
+        if not self.coordinator.data or "facility" not in self.coordinator.data:
+            return {}
+        
+        facility_data = self.coordinator.data["facility"]
+        if not facility_data:
+            return {}
+        
+        return {
+            "latitude": facility_data.get("latitude"),
+            "longitude": facility_data.get("longitude"),
+            "country": facility_data.get("country"),
+            "county": facility_data.get("county"),
+            "charger_count": len(facility_data.get("chargers", [])),
+            "kw_effect": facility_data.get("kweffect"),
+        }
